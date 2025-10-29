@@ -34,7 +34,7 @@ COPY --from=build /app/publish .
 RUN mkdir -p /app/cache 
 # Expose port EXPOSE 8080 
 # Set environment variables 
-ENV ASPNETCORE_URLS=http://+:8080 ENV 
-ASPNETCORE_ENVIRONMENT=Production 
+ENV ASPNETCORE_URLS=http://+:8080 
+ENV ASPNETCORE_ENVIRONMENT=Production 
 
 # Run the application ENTRYPOINT ["dotnet", "CCEAPI.dll"]

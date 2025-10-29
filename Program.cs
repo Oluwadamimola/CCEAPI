@@ -9,8 +9,6 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.DefaultIgnoreCondition = 
             System.Text.Json.Serialization.JsonIgnoreCondition.Never;
-        options.JsonSerializerOptions.PropertyNamingPolicy = 
-            System.Text.Json.JsonNamingPolicy.CamelCase;
     });
 
 builder.Services.AddEndpointsApiExplorer();
@@ -21,7 +19,7 @@ var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
 
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 44))));
 
 
 builder.Services.AddScoped<IImageService, ImageService>();

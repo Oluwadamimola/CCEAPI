@@ -31,20 +31,18 @@ namespace CCEAPI.Services
             try
             {
                 Console.WriteLine("=== STARTING REFRESH ===");
+                _httpClient.Timeout = TimeSpan.FromMinutes(2);
                 
                 // Fetch countries data
                 var countriesResponse = await _httpClient.GetStringAsync(
                     "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies");
                 
-                Console.WriteLine($"Got response length: {countriesResponse.Length}");
-                Console.WriteLine($"First 300 chars: {countriesResponse.Substring(0, Math.Min(300, countriesResponse.Length))}");
-                
                 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var countries = JsonSerializer.Deserialize<List<CountryApiResponse>>(countriesResponse, options);
 
-                Console.WriteLine($"Deserialized countries count: {countries?.Count ?? 0}");
+                Console.WriteLine($"Fetched {countries?.Count ?? 0} countries");
 
-                if (countries == null || !countries.Any())
+                if (countries == null || countries.Count == 0)
                 {
                     throw new Exception("No countries data received from restcountries API");
                 }
@@ -53,15 +51,22 @@ namespace CCEAPI.Services
                 var ratesResponse = await _httpClient.GetStringAsync("https://open.er-api.com/v6/latest/USD");
                 var exchangeRates = JsonSerializer.Deserialize<ExchangeRateResponse>(ratesResponse, options);
 
-                Console.WriteLine($"Exchange rates count: {exchangeRates?.Rates?.Count ?? 0}");
+                Console.WriteLine($"Fetched {exchangeRates?.Rates?.Count ?? 0} exchange rates");
 
                 if (exchangeRates == null || exchangeRates.Rates == null)
                 {
                     throw new Exception("No exchange rates data received from exchange rate API");
                 }
 
+                // ⚡ OPTIMIZATION: Load ALL existing countries ONCE (not in loop)
+                var existingCountries = await _context.Countries
+                    .ToDictionaryAsync(c => c.Name.ToLower(), c => c);
+                
+                Console.WriteLine($"Found {existingCountries.Count} existing countries in database");
+
                 var now = DateTime.UtcNow;
                 int addedCount = 0;
+                int updatedCount = 0;
 
                 foreach (var countryData in countries)
                 {
@@ -89,11 +94,11 @@ namespace CCEAPI.Services
                         estimatedGdp = 0;
                     }
 
-                    var existingCountry = await _context.Countries
-                        .FirstOrDefaultAsync(c => c.Name != null && c.Name.ToLower() == countryData.Name.ToLower());
-
-                    if (existingCountry != null)
+                    // ⚡ Check dictionary instead of database query
+                    var nameLower = countryData.Name.ToLower();
+                    if (existingCountries.TryGetValue(nameLower, out var existingCountry))
                     {
+                        // Update existing country
                         existingCountry.Capital = countryData.Capital;
                         existingCountry.Region = countryData.Region;
                         existingCountry.Population = countryData.Population;
@@ -102,9 +107,11 @@ namespace CCEAPI.Services
                         existingCountry.EstimatedGdp = estimatedGdp;
                         existingCountry.FlagUrl = countryData.Flag;
                         existingCountry.LastRefreshedAt = now;
+                        updatedCount++;
                     }
                     else
                     {
+                        // Insert new country
                         var newCountry = new Country
                         {
                             Id = Guid.NewGuid(),
@@ -123,14 +130,16 @@ namespace CCEAPI.Services
                     }
                 }
 
-                Console.WriteLine($"About to save {addedCount} countries to database...");
+                Console.WriteLine($"Added: {addedCount}, Updated: {updatedCount}");
+                Console.WriteLine("Saving to database...");
+                
                 await _context.SaveChangesAsync();
-                Console.WriteLine("SAVED TO DATABASE!");
+                
+                Console.WriteLine("Saved successfully!");
 
+                // Update global metadata
                 var metadata = await _context.RefreshMetadata.FirstOrDefaultAsync();
                 var totalCountries = await _context.Countries.CountAsync();
-
-                Console.WriteLine($"Total countries in DB: {totalCountries}");
 
                 if (metadata == null)
                 {
@@ -149,13 +158,13 @@ namespace CCEAPI.Services
 
                 await _context.SaveChangesAsync();
 
+                Console.WriteLine("Generating summary image...");
                 await _imageService.GenerateSummaryImageAsync();
                 Console.WriteLine("=== REFRESH COMPLETE ===");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"ERROR: {ex.Message}");
-                Console.WriteLine($"Stack: {ex.StackTrace}");
                 throw;
             }
         }

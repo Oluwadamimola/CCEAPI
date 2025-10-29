@@ -27,6 +27,7 @@ namespace CCEAPI.Services
             var directory = Path.GetDirectoryName(_imagePath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
+                Console.WriteLine($"Creating cache directory: {directory}");
                 Directory.CreateDirectory(directory);
             }
         }

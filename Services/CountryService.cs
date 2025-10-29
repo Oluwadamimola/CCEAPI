@@ -1,308 +1,256 @@
-using CCEAPI.Model;
-using CCEAPI.Data;
-using Microsoft.EntityFrameworkCore;
-using CCEAPI.Services;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
+using System.Threading.Tasks;
+using CCEAPI.Data;
+using CCEAPI.Model;
+using CCEAPI.Model.DTOs;
+using Microsoft.EntityFrameworkCore;
 
-namespace CCEAPI.Services 
+namespace CCEAPI.Services
 {
-    public class CountryService 
+    public class CountryService
     {
-        private readonly AddDbContext _context;
+        private readonly AppDbContext _context;
         private readonly HttpClient _httpClient;
-        private readonly IImageService _imageservice;
+        private readonly IImageService _imageService;
+        private readonly Random _random = new Random();
 
-        public CountryService(AppDbContext context, HttpClient httpClient, ImageService imageservice) 
+        public CountryService(AppDbContext context, IImageService imageService)
         {
             _context = context;
-            _httpClient = httpClient;
-            _imageservice = imageservice;
+            _imageService = imageService;
+            _httpClient = new HttpClient();
+            _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
-    }
 
-    
-
-    public async Task<List<Country>> FetchCountriesFromApiAsync()
-    {
-        string apiUrl = "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies";
-
-        try
+        public async Task RefreshCountriesAsync()
         {
-            var response = await _httpClient.GetAsync(apiUrl);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                throw new Exception("Failed to fetch data from REST Countries API.");
-            }
+                Console.WriteLine("=== STARTING REFRESH ===");
+                
+                // Fetch countries data
+                var countriesResponse = await _httpClient.GetStringAsync(
+                    "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies");
+                
+                Console.WriteLine($"Got response length: {countriesResponse.Length}");
+                Console.WriteLine($"First 300 chars: {countriesResponse.Substring(0, Math.Min(300, countriesResponse.Length))}");
+                
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var countries = JsonSerializer.Deserialize<List<CountryApiResponse>>(countriesResponse, options);
 
-            var json = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Deserialized countries count: {countries?.Count ?? 0}");
 
-            // Deserialize into dynamic objects
-            var countriesData = System.Text.Json.JsonSerializer.Deserialize<List<dynamic>>(json);
-
-            var countries = new List<Country>();
-
-            if (countriesData != null)
-            {
-                foreach (var item in countriesData)
+                if (countries == null || !countries.Any())
                 {
-                    string? currencyCode = null;
+                    throw new Exception("No countries data received from restcountries API");
+                }
 
-                    try
+                // Fetch exchange rates
+                var ratesResponse = await _httpClient.GetStringAsync("https://open.er-api.com/v6/latest/USD");
+                var exchangeRates = JsonSerializer.Deserialize<ExchangeRateResponse>(ratesResponse, options);
+
+                Console.WriteLine($"Exchange rates count: {exchangeRates?.Rates?.Count ?? 0}");
+
+                if (exchangeRates == null || exchangeRates.Rates == null)
+                {
+                    throw new Exception("No exchange rates data received from exchange rate API");
+                }
+
+                var now = DateTime.UtcNow;
+                int addedCount = 0;
+
+                foreach (var countryData in countries)
+                {
+                    if (string.IsNullOrEmpty(countryData.Name))
                     {
-                        // Some countries have multiple currencies, take the first one
-                        if (item?.GetProperty("currencies").ValueKind == System.Text.Json.JsonValueKind.Array)
+                        Console.WriteLine("Skipping country with no name");
+                        continue;
+                    }
+
+                    string? currencyCode = countryData.Currencies?.FirstOrDefault()?.Code;
+                    decimal? exchangeRate = null;
+                    decimal? estimatedGdp = null;
+
+                    if (!string.IsNullOrEmpty(currencyCode))
+                    {
+                        if (exchangeRates.Rates.TryGetValue(currencyCode, out var rate))
                         {
-                            var firstCurrency = item?.GetProperty("currencies")[0];
-                            if (firstCurrency.TryGetProperty("code", out var codeProp))
-                            {
-                                currencyCode = codeProp.GetString();
-                            }
+                            exchangeRate = rate;
+                            var randomMultiplier = _random.Next(1000, 2001);
+                            estimatedGdp = (countryData.Population * randomMultiplier) / rate;
                         }
                     }
-                    catch
+                    else
                     {
-                        // ignore if structure is missing
+                        estimatedGdp = 0;
                     }
 
-                    countries.Add(new Country
+                    var existingCountry = await _context.Countries
+                        .FirstOrDefaultAsync(c => c.Name != null && c.Name.ToLower() == countryData.Name.ToLower());
+
+                    if (existingCountry != null)
                     {
-                        Id = Guid.NewGuid(),
-                        Name = item.GetProperty("name").GetString(),
-                        Capital = item.TryGetProperty("capital", out var cap) ? cap.GetString() : null,
-                        Region = item.TryGetProperty("region", out var reg) ? reg.GetString() : null,
-                        Population = item.TryGetProperty("population", out var pop) ? pop.GetInt64() : 0,
-                        CurrencyCode = currencyCode,
-                        FlagUrl = item.TryGetProperty("flag", out var flag) ? flag.GetString() : null,
-                        ExchangeRate = 0,
-                        EstimateGdp = 0,
-                        LastRefreshedAt = DateTime.UtcNow
-                    });
+                        existingCountry.Capital = countryData.Capital;
+                        existingCountry.Region = countryData.Region;
+                        existingCountry.Population = countryData.Population;
+                        existingCountry.CurrencyCode = currencyCode;
+                        existingCountry.ExchangeRate = exchangeRate;
+                        existingCountry.EstimatedGdp = estimatedGdp;
+                        existingCountry.FlagUrl = countryData.Flag;
+                        existingCountry.LastRefreshedAt = now;
+                    }
+                    else
+                    {
+                        var newCountry = new Country
+                        {
+                            Id = Guid.NewGuid(),
+                            Name = countryData.Name,
+                            Capital = countryData.Capital,
+                            Region = countryData.Region,
+                            Population = countryData.Population,
+                            CurrencyCode = currencyCode,
+                            ExchangeRate = exchangeRate,
+                            EstimatedGdp = estimatedGdp,
+                            FlagUrl = countryData.Flag,
+                            LastRefreshedAt = now
+                        };
+                        await _context.Countries.AddAsync(newCountry);
+                        addedCount++;
+                    }
                 }
-            }
 
-            return countries;
-        }
-        catch (Exception ex)
-        {
-            HandleExternalApiError("REST Countries API", ex);
-            return new List<Country>();
-        }
-    }
-    public async Task<Dictionary<string, decimal>> FetchExchangeRatesAsync()
-    {
-        string apiUrl = "https://open.er-api.com/v6/latest/USD";
+                Console.WriteLine($"About to save {addedCount} countries to database...");
+                await _context.SaveChangesAsync();
+                Console.WriteLine("SAVED TO DATABASE!");
 
-        try
-        {
-            var response = await _httpClient.GetAsync(apiUrl);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception("Failed to fetch data from Exchange Rate API.");
-            }
+                var metadata = await _context.RefreshMetadata.FirstOrDefaultAsync();
+                var totalCountries = await _context.Countries.CountAsync();
 
-            var json = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Total countries in DB: {totalCountries}");
 
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("rates", out JsonElement ratesElement))
-            {
-                throw new Exception("Rates data not found in response.");
-            }
-
-            var exchangeRates = new Dictionary<string, decimal>();
-
-            foreach (var rate in ratesElement.EnumerateObject())
-            {
-                if (rate.Value.TryGetDecimal(out decimal value))
+                if (metadata == null)
                 {
-                    exchangeRates[rate.Name] = value;
+                    metadata = new RefreshMetadata
+                    {
+                        LastRefreshedAt = now,
+                        TotalCountries = totalCountries
+                    };
+                    await _context.RefreshMetadata.AddAsync(metadata);
                 }
-            }
-
-            return exchangeRates;
-        }
-        catch (Exception ex)
-        {
-            HandleExternalApiError("Exchange Rate API", ex);
-            return new Dictionary<string, decimal>();
-        }
-    }
-    private decimal ComputeEstimatedGdp(long population, decimal exchangeRate)
-    {
-        try
-        {
-            // Simple estimation formula
-            return population * exchangeRate * 0.001m;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-    public async Task RefreshCountriesAsync()
-    {
-        var countryApi = "https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies";
-        var exchangeRateApi = "https://open.er-api.com/v6/latest/USD";
-
-        // 1️⃣ Fetch countries data
-        var countryResponse = await _httpClient.GetAsync(countryApi);
-        if (!countryResponse.IsSuccessStatusCode)
-            throw new Exception("Failed to fetch countries from REST Countries API");
-
-        var countryJson = await countryResponse.Content.ReadAsStringAsync();
-        var countriesData = JsonSerializer.Deserialize<List<JsonElement>>(countryJson);
-
-        // 2️⃣ Fetch exchange rates
-        var rateResponse = await _httpClient.GetAsync(exchangeRateApi);
-        if (!rateResponse.IsSuccessStatusCode)
-            throw new Exception("Failed to fetch data from Exchange Rate API");
-
-        var rateJson = await rateResponse.Content.ReadAsStringAsync();
-        var rateData = JsonSerializer.Deserialize<JsonElement>(rateJson);
-        var rates = rateData.GetProperty("rates");
-
-        // 3️⃣ Loop through countries and prepare data
-        foreach (var item in countriesData)
-        {
-            string name = item.GetProperty("name").GetString() ?? "";
-            string capital = item.TryGetProperty("capital", out var cap) ? cap.GetString() ?? "" : "";
-            string region = item.TryGetProperty("region", out var reg) ? reg.GetString() ?? "" : "";
-            long population = item.TryGetProperty("population", out var pop) ? pop.GetInt64() : 0;
-            string flag = item.TryGetProperty("flag", out var flg) ? flg.GetString() ?? "" : "";
-
-            // Handle currency
-            string? currencyCode = null;
-            decimal? exchangeRate = null;
-            decimal estimatedGdp = 0;
-
-            if (item.TryGetProperty("currencies", out var currencies) && currencies.ValueKind == JsonValueKind.Array && currencies.GetArrayLength() > 0)
-            {
-                currencyCode = currencies[0].GetProperty("code").GetString();
-
-                if (currencyCode != null && rates.TryGetProperty(currencyCode, out var rateElement))
+                else
                 {
-                    exchangeRate = rateElement.GetDecimal();
-                    estimatedGdp = ComputeEstimatedGdp(population, exchangeRate.Value);
+                    metadata.LastRefreshedAt = now;
+                    metadata.TotalCountries = totalCountries;
                 }
+
+                await _context.SaveChangesAsync();
+
+                await _imageService.GenerateSummaryImageAsync();
+                Console.WriteLine("=== REFRESH COMPLETE ===");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR: {ex.Message}");
+                Console.WriteLine($"Stack: {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        public async Task<List<CountryResponse>> GetCountriesAsync(string? region, string? currency, string? sort)
+        {
+            var query = _context.Countries.AsQueryable();
+
+            // Apply filters
+            if (!string.IsNullOrEmpty(region))
+            {
+                query = query.Where(c => c.Region != null && c.Region.ToLower() == region.ToLower());
             }
 
-            // 4️⃣ Check if the country already exists
-            var existing = await _context.Countries.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower());
-
-            if (existing != null)
+            if (!string.IsNullOrEmpty(currency))
             {
-                // Update
-                existing.Capital = capital;
-                existing.Region = region;
-                existing.Population = population;
-                existing.CurrencyCode = currencyCode;
-                existing.ExchangeRate = exchangeRate ?? 0;
-                existing.EstimateGdp = estimatedGdp;
-                existing.FlagUrl = flag;
-                existing.LastRefreshedAt = DateTime.UtcNow;
+                query = query.Where(c => c.CurrencyCode != null && c.CurrencyCode.ToUpper() == currency.ToUpper());
             }
-            else
+
+            // Apply sorting
+            if (!string.IsNullOrEmpty(sort))
             {
-                // Insert
-                var country = new Country
+                query = sort.ToLower() switch
                 {
-                    Id = Guid.NewGuid(),
-                    Name = name,
-                    Capital = capital,
-                    Region = region,
-                    Population = population,
-                    CurrencyCode = currencyCode,
-                    ExchangeRate = exchangeRate ?? 0,
-                    EstimateGdp = estimatedGdp,
-                    FlagUrl = flag,
-                    LastRefreshedAt = DateTime.UtcNow
+                    "gdp_desc" => query.OrderByDescending(c => c.EstimatedGdp ?? 0),
+                    "gdp_asc" => query.OrderBy(c => c.EstimatedGdp ?? 0),
+                    "name_asc" => query.OrderBy(c => c.Name),
+                    "name_desc" => query.OrderByDescending(c => c.Name),
+                    "population_desc" => query.OrderByDescending(c => c.Population),
+                    "population_asc" => query.OrderBy(c => c.Population),
+                    _ => query
                 };
-
-                await _context.Countries.AddAsync(country);
             }
-        }
-        // 5️ Save all changes
-        await _context.SaveChangesAsync();
 
-        var allCountries = await _context.Countries.ToListAsync();
-        await _imageService.GenerateSummaryImageAsync(allCountries);
-    }
+            var countries = await query.ToListAsync();
 
-    public async Task<IEnumerable<Country>> GetAllCountriesAsync(string? region = null, string? currency = null, string? sort = null)
-    {
-        var query = _context.Countries.AsQueryable();
-
-        // Filter by region
-        if (!string.IsNullOrEmpty(region))
-            query = query.Where(c => c.Region.ToLower() == region.ToLower());
-
-        // Filter by currency
-        if (!string.IsNullOrEmpty(currency))
-            query = query.Where(c => c.CurrencyCode.ToLower() == currency.ToLower());
-
-        // Sorting
-        if (!string.IsNullOrEmpty(sort))
-        {
-            switch (sort.ToLower())
+            return countries.Select(c => new CountryResponse
             {
-                case "gdp_desc":
-                    query = query.OrderByDescending(c => c.EstimateGdp);
-                    break;
-                case "gdp_asc":
-                    query = query.OrderBy(c => c.EstimateGdp);
-                    break;
-                case "population_desc":
-                    query = query.OrderByDescending(c => c.Population);
-                    break;
-                case "population_asc":
-                    query = query.OrderBy(c => c.Population);
-                    break;
-            }
+                Id = c.Id,
+                Name = c.Name ?? string.Empty,
+                Capital = c.Capital,
+                Region = c.Region,
+                Population = c.Population,
+                CurrencyCode = c.CurrencyCode,
+                ExchangeRate = c.ExchangeRate,
+                EstimatedGdp = c.EstimatedGdp,
+                FlagUrl = c.FlagUrl,
+                LastRefreshedAt = c.LastRefreshedAt
+            }).ToList();
         }
 
-        return await query.ToListAsync();
-    }
-    public async Task<object> GetStatusAsync()
-    {
-        var totalCountries = await _context.Countries.CountAsync();
-        var lastRefresh = await _context.Countries
-            .OrderByDescending(c => c.LastRefreshedAt)
-            .Select(c => c.LastRefreshedAt)
-            .FirstOrDefaultAsync();
-
-        return new
+        public async Task<CountryResponse?> GetCountryByNameAsync(string name)
         {
-            total_countries = totalCountries,
-            last_refreshed_at = lastRefresh
-        };
+            var country = await _context.Countries
+                .FirstOrDefaultAsync(c => c.Name != null && c.Name.ToLower() == name.ToLower());
+
+            if (country == null) return null;
+
+            return new CountryResponse
+            {
+                Id = country.Id,
+                Name = country.Name ?? string.Empty,
+                Capital = country.Capital,
+                Region = country.Region,
+                Population = country.Population,
+                CurrencyCode = country.CurrencyCode,
+                ExchangeRate = country.ExchangeRate,
+                EstimatedGdp = country.EstimatedGdp,
+                FlagUrl = country.FlagUrl,
+                LastRefreshedAt = country.LastRefreshedAt
+            };
+        }
+
+        public async Task<bool> DeleteCountryAsync(string name)
+        {
+            var country = await _context.Countries
+                .FirstOrDefaultAsync(c => c.Name != null && c.Name.ToLower() == name.ToLower());
+
+            if (country == null) return false;
+
+            _context.Countries.Remove(country);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<StatusResponse> GetStatusAsync()
+        {
+            var metadata = await _context.RefreshMetadata.FirstOrDefaultAsync();
+            var totalCountries = await _context.Countries.CountAsync();
+
+            return new StatusResponse
+            {
+                TotalCountries = totalCountries,
+                LastRefreshedAt = metadata != null ? metadata.LastRefreshedAt : null
+            };
+        }
     }
-    public async Task<Country?> GetCountryByNameAsync(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-            throw new ArgumentException("Country name is required.");
-
-        var country = await _context.Countries
-            .FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower());
-
-        return country;
-    }
-    public async Task<bool> DeleteCountryAsync(string name)
-    {
-        var country = await _context.Countries
-            .FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower());
-
-        if (country == null)
-            return false;
-
-        _context.Countries.Remove(country);
-        await _context.SaveChangesAsync();
-
-        return true;
-    }
-    private void HandleExternalApiError(string source, Exception ex)
-    {
-        Console.WriteLine($"[{source}] Error: {ex.Message}");
-    }
-
 }

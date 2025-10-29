@@ -49,6 +49,15 @@ namespace CCEAPI.Controllers
                 });
             }
         }
+        [HttpGet("refresh")]
+        public IActionResult GetRefreshEndpoint()
+        {
+            return StatusCode(405, new ErrorResponse
+            {
+                Error = "Method Not Allowed",
+                Details = "Please use POST /Countries/refresh instead of GET"
+            });
+        }
 
         [HttpGet]
         public async Task<IActionResult> GetCountries(

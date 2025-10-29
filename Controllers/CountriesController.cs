@@ -29,7 +29,6 @@ namespace CCEAPI.Controllers
             }
             catch (Exception ex)
             {
-                // Check if it's an external API error
                 if (ex.Message.Contains("Could not fetch data") || 
                     ex.Message.Contains("timed out") ||
                     ex.Message.Contains("API"))
@@ -41,7 +40,6 @@ namespace CCEAPI.Controllers
                     });
                 }
 
-                // Internal server error
                 return StatusCode(500, new ErrorResponse
                 {
                     Error = "Internal server error",
@@ -50,6 +48,16 @@ namespace CCEAPI.Controllers
             }
         }
 
+        [HttpGet("refresh")]
+        public IActionResult GetRefreshEndpoint()
+        {
+            return StatusCode(405, new ErrorResponse
+            {
+                Error = "Method Not Allowed",
+                Details = "Please use POST /Countries/refresh instead of GET"
+            });
+        }
+        
         [HttpGet]
         public async Task<IActionResult> GetCountries(
             [FromQuery] string? region,

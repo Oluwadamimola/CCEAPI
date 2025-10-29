@@ -17,17 +17,30 @@ namespace CCEAPI.Services
     public class ImageService : IImageService
     {
         private readonly AppDbContext _context;
-        private readonly string _imagePath = Path.Combine("cache", "summary.png");
+        private readonly string _imagePath;
 
         public ImageService(AppDbContext context)
         {
             _context = context;
             
+            // ALWAYS use absolute path
+            var appDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var cacheDirectory = Path.Combine(appDirectory, "cache");
+            _imagePath = Path.Combine(cacheDirectory, "summary.png");
+            
+            Console.WriteLine($"ImageService initialized");
+            Console.WriteLine($"App directory: {appDirectory}");
+            Console.WriteLine($"Image path: {_imagePath}");
+            
             // Create cache directory if it doesn't exist
-            var directory = Path.GetDirectoryName(_imagePath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            if (!Directory.Exists(cacheDirectory))
             {
-                Directory.CreateDirectory(directory);
+                Console.WriteLine($"Creating cache directory: {cacheDirectory}");
+                Directory.CreateDirectory(cacheDirectory);
+            }
+            else
+            {
+                Console.WriteLine($"Cache directory already exists: {cacheDirectory}");
             }
         }
 

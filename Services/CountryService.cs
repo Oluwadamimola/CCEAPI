@@ -134,7 +134,7 @@ namespace CCEAPI.Services
                 Console.WriteLine("Saving to database...");
                 
                 await _context.SaveChangesAsync();
-                
+
                 Console.WriteLine("Saved successfully!");
 
                 // Update global metadata
@@ -158,14 +158,29 @@ namespace CCEAPI.Services
 
                 await _context.SaveChangesAsync();
 
-                Console.WriteLine("Generating summary image...");
-                await _imageService.GenerateSummaryImageAsync();
+                // Generate summary image - don't let it crash the refresh
+                try
+                {
+                    Console.WriteLine("Attempting to generate summary image...");
+                    await _imageService.GenerateSummaryImageAsync();
+                    Console.WriteLine("Image generation completed successfully");
+                }
+                catch (Exception imgEx)
+                {
+                    Console.WriteLine($"⚠️ Image generation failed (non-critical): {imgEx.Message}");
+                    Console.WriteLine($"Stack trace: {imgEx.StackTrace}");
+                    // Continue anyway - image is optional
+                }
+
                 Console.WriteLine("=== REFRESH COMPLETE ===");
             }
-            catch (Exception ex)
+            catch (HttpRequestException ex)
             {
-                Console.WriteLine($"ERROR: {ex.Message}");
-                throw;
+                throw new Exception($"Could not fetch data from external API: {ex.Message}");
+            }
+            catch (TaskCanceledException)
+            {
+                throw new Exception("External API request timed out");
             }
         }
 

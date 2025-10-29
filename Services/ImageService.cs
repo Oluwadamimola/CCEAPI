@@ -17,6 +17,7 @@ namespace CCEAPI.Services
     public class ImageService : IImageService
     {
         private readonly AppDbContext _context;
+        private readonly string _imagePath;
 
         public ImageService(AppDbContext context)
         {

@@ -1,40 +1,40 @@
-# Use the official .NET SDK image for building
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
-WORKDIR /src
+# Use the official .NET SDK image for building 
 
-# Copy csproj and restore dependencies
-COPY *.csproj ./
-RUN dotnet restore
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build 
 
-# Copy everything else and build
-COPY . ./
-RUN dotnet publish -c Release -o /app/publish
+WORKDIR /src 
 
-# Build runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
-WORKDIR /app
+# Copy csproj and restore dependencies COPY *.csproj ./ 
 
-# Install required dependencies for SkiaSharp
-RUN apt-get update && apt-get install -y \
-    libfontconfig1 \
-    libfreetype6 \
-    libx11-6 \
-    libxext6 \
-    libxrender1 \
-    && rm -rf /var/lib/apt/lists/*
+RUN dotnet restore # Copy everything else and build COPY . ./ 
 
-# Copy published app
-COPY --from=build /app/publish .
+RUN dotnet publish -c Release -o /app/publish 
 
-# Create cache directory for images
-RUN mkdir -p /app/cache
+# Build runtime image FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime 
 
-# Expose port
-EXPOSE 8080
+WORKDIR /app 
 
-# Set environment variables
-ENV ASPNETCORE_URLS=http://+:8080
-ENV ASPNETCORE_ENVIRONMENT=Production
+# Install required dependencies for SkiaSharp 
 
-# Run the application
-ENTRYPOINT ["dotnet", "CCEAPI.dll"]
+RUN apt-get update && apt-get install -y \ 
+libfontconfig1 \ 
+libfreetype6 \ 
+libharfbuzz0b \ 
+libicu72 \ 
+libx11-6 \ 
+libxext6 \ 
+libxrender1 \ 
+libgl1-mesa-glx \ 
+ca-certificates \ 
+&& rm -rf /var/lib/apt/lists/*
+
+# Copy published app 
+COPY --from=build /app/publish . 
+# Create cache directory for images 
+RUN mkdir -p /app/cache 
+# Expose port EXPOSE 8080 
+# Set environment variables 
+ENV ASPNETCORE_URLS=http://+:8080 ENV 
+ASPNETCORE_ENVIRONMENT=Production 
+
+# Run the application ENTRYPOINT ["dotnet", "CCEAPI.dll"]

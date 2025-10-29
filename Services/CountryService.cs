@@ -58,7 +58,6 @@ namespace CCEAPI.Services
                     throw new Exception("No exchange rates data received from exchange rate API");
                 }
 
-                // ⚡ OPTIMIZATION: Load ALL existing countries ONCE (not in loop)
                 var existingCountries = await _context.Countries
                     .ToDictionaryAsync(c => c.Name.ToLower(), c => c);
                 

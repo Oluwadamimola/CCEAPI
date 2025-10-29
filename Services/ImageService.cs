@@ -27,15 +27,19 @@ namespace CCEAPI.Services
             var directory = Path.GetDirectoryName(_imagePath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
-                Console.WriteLine($"Creating cache directory: {directory}");
                 Directory.CreateDirectory(directory);
             }
         }
 
         public async Task GenerateSummaryImageAsync()
         {
-            // Get total countries count
-            var totalCountries = await _context.Countries.CountAsync();
+            try
+            {
+                Console.WriteLine("=== GENERATING SUMMARY IMAGE ===");
+                
+                // Get total countries count
+                var totalCountries = await _context.Countries.CountAsync();
+                Console.WriteLine($"Total countries: {totalCountries}");
             
             // Get top 5 countries by estimated GDP
             var topCountries = await _context.Countries
@@ -45,6 +49,8 @@ namespace CCEAPI.Services
                 .Select(c => new { c.Name, c.EstimatedGdp })
                 .ToListAsync();
 
+            Console.WriteLine($"Top countries found: {topCountries.Count}");
+
             // Get last refresh timestamp
             var metadata = await _context.RefreshMetadata.FirstOrDefaultAsync();
             var lastRefresh = metadata?.LastRefreshedAt ?? DateTime.UtcNow;
@@ -52,6 +58,8 @@ namespace CCEAPI.Services
             // Image dimensions
             const int width = 800;
             const int height = 600;
+
+            Console.WriteLine("Creating image surface...");
 
             // Create image surface
             using var surface = SKSurface.Create(new SKImageInfo(width, height));
@@ -158,20 +166,47 @@ namespace CCEAPI.Services
             canvas.DrawText(timestampText, 50, height - 50, timestampPaint);
 
             // Save image to disk
+            Console.WriteLine($"Saving image to: {_imagePath}");
+            
             using var image = surface.Snapshot();
             using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            
+            // Ensure directory exists before writing
+            var directory = Path.GetDirectoryName(_imagePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Console.WriteLine($"Creating directory: {directory}");
+                Directory.CreateDirectory(directory);
+            }
+            
             using var stream = File.OpenWrite(_imagePath);
             data.SaveTo(stream);
+            
+            Console.WriteLine($"✅ Image saved successfully! Size: {data.Size} bytes");
+            Console.WriteLine($"File exists: {File.Exists(_imagePath)}");
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ ERROR generating image: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            throw;
+        }
+    }
 
         public byte[]? GetSummaryImage()
         {
+            Console.WriteLine($"Checking for image at: {_imagePath}");
+            Console.WriteLine($"File exists: {File.Exists(_imagePath)}");
+            
             if (!File.Exists(_imagePath))
             {
+                Console.WriteLine("Image file not found!");
                 return null;
             }
 
-            return File.ReadAllBytes(_imagePath);
+            var imageBytes = File.ReadAllBytes(_imagePath);
+            Console.WriteLine($"Image loaded: {imageBytes.Length} bytes");
+            return imageBytes;
         }
     }
 }

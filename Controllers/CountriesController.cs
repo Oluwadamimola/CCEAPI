@@ -70,6 +70,32 @@ namespace CCEAPI.Controllers
                 });
             }
         }
+        [HttpGet("image")]
+        public IActionResult GetSummaryImage()
+        {
+            try
+            {
+                var imageBytes = _imageService.GetSummaryImage();
+                
+                if (imageBytes == null)
+                {
+                    return NotFound(new ErrorResponse
+                    {
+                        Error = "Summary image not found"
+                    });
+                }
+
+                return File(imageBytes, "image/png");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = "Internal server error",
+                    Details = ex.Message
+                });
+            }
+        }
 
         [HttpGet("{name}")]
         public async Task<IActionResult> GetCountryByName(string name)
@@ -125,31 +151,6 @@ namespace CCEAPI.Controllers
             }
         }
 
-        [HttpGet("image")]
-        public IActionResult GetSummaryImage()
-        {
-            try
-            {
-                var imageBytes = _imageService.GetSummaryImage();
-                
-                if (imageBytes == null)
-                {
-                    return NotFound(new ErrorResponse
-                    {
-                        Error = "Summary image not found"
-                    });
-                }
-
-                return File(imageBytes, "image/png");
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new ErrorResponse
-                {
-                    Error = "Internal server error",
-                    Details = ex.Message
-                });
-            }
-        }
+        
     }
 }
